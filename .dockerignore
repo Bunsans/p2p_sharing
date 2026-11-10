@@ -1,0 +1,13 @@
+*
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!manage.py
+!payments/
+!payments/**
+!testproject/
+!testproject/**
+!tests/
+!tests/**
+**/__pycache__/
+**/*.py[cod]
