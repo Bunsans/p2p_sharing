@@ -1,7 +1,8 @@
 from django.contrib import admin
 
 from .models import (
-    Charge, PaymentAttempt, PaymentRequest, ProviderCommand, ProviderObservation, Settlement,
+    Charge, MoneyDecision, MoneyDecisionRequest, MoneyReservation, PaymentAttempt,
+    PaymentRequest, ProviderCommand, ProviderObservation, Settlement,
 )
 
 
@@ -45,3 +46,19 @@ class ProviderCommandAdmin(HistoryAdmin):
 
 
 admin.site.register([Charge, PaymentRequest, ProviderObservation], HistoryAdmin)
+
+
+@admin.register(MoneyDecision)
+class MoneyDecisionAdmin(HistoryAdmin):
+    list_display = ("id", "payment", "kind", "amount_kopecks", "actor_ref", "basis_ref", "created_at")
+    list_filter = ("kind",)
+    search_fields = ("=id", "basis_ref", "payment__charge__settlement__booking_ref")
+
+
+@admin.register(MoneyReservation)
+class MoneyReservationAdmin(HistoryAdmin):
+    list_display = ("id", "decision", "purpose", "amount_kopecks", "rent_owner_kopecks", "rent_commission_kopecks")
+    list_filter = ("purpose",)
+
+
+admin.site.register(MoneyDecisionRequest, HistoryAdmin)

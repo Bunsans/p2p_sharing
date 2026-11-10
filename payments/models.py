@@ -162,3 +162,76 @@ class ProviderObservation(models.Model):
     currency = models.CharField(max_length=3)
     applied = models.BooleanField(default=False)
     received_at = models.DateTimeField(auto_now_add=True)
+
+
+class MoneyDecision(models.Model):
+    """Immutable approval and its source; not evidence of a transfer."""
+
+    class Kind(models.TextChoices):
+        RENT_REFUND = "rent_refund"
+        RENT_PAYOUT = "rent_payout"
+        DEPOSIT_DISTRIBUTION = "deposit_distribution"
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    payment = models.ForeignKey(PaymentAttempt, on_delete=models.PROTECT, related_name="decisions")
+    kind = models.CharField(max_length=24, choices=Kind)
+    amount_kopecks = models.BigIntegerField()
+    basis_ref = models.CharField(max_length=128, unique=True)
+    basis_version = models.PositiveIntegerField()
+    actor_ref = models.CharField(max_length=128)
+    expected_terms_version = models.PositiveIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=(Q(kind__in=["rent_refund", "rent_payout"], amount_kopecks__gt=0)
+                           | Q(kind="deposit_distribution", amount_kopecks__gte=0)),
+                name="decision_valid_kind_amount",
+            ),
+            models.CheckConstraint(
+                condition=Q(basis_version__gt=0, expected_terms_version__gt=0),
+                name="decision_positive_versions",
+            ),
+        ]
+
+
+class MoneyReservation(models.Model):
+    """Funds committed by a decision, retained until an explicit future workflow."""
+
+    class Purpose(models.TextChoices):
+        RENT_REFUND = "rent_refund"
+        RENT_PAYOUT = "rent_payout"
+        DEPOSIT_REFUND = "deposit_refund"
+        DEPOSIT_COMPENSATION = "deposit_compensation"
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    decision = models.ForeignKey(MoneyDecision, on_delete=models.PROTECT, related_name="reservations")
+    purpose = models.CharField(max_length=24, choices=Purpose)
+    amount_kopecks = models.BigIntegerField()
+    rent_owner_kopecks = models.BigIntegerField(default=0)
+    rent_commission_kopecks = models.BigIntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["decision", "purpose"], name="reservation_unique_purpose"),
+            models.CheckConstraint(
+                condition=Q(amount_kopecks__gt=0, rent_owner_kopecks__gte=0,
+                            rent_commission_kopecks__gte=0),
+                name="reservation_positive_money",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    (Q(purpose="rent_refund") | Q(purpose="rent_payout", rent_commission_kopecks=0))
+                    & Q(amount_kopecks=F("rent_owner_kopecks") + F("rent_commission_kopecks"))
+                ) | Q(purpose__in=["deposit_refund", "deposit_compensation"],
+                      rent_owner_kopecks=0, rent_commission_kopecks=0),
+                name="reservation_purpose_shares",
+            ),
+        ]
+
+
+class MoneyDecisionRequest(models.Model):
+    id = models.UUIDField(primary_key=True, editable=False)
+    decision = models.ForeignKey(MoneyDecision, on_delete=models.PROTECT, related_name="requests")
+    created_at = models.DateTimeField(auto_now_add=True)

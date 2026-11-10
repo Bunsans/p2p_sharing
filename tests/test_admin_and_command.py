@@ -9,6 +9,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from payments.models import PaymentAttempt, ProviderCommand
+from payments.reservations import reserve_money
 from payments.services import prepare_settlement, start_payment
 
 
@@ -58,3 +59,24 @@ class AdminAndCommandTests(TransactionTestCase):
         user = get_user_model().objects.create_user(username="staff", is_staff=True)
         self.client.force_login(user)
         self.assertEqual(self.client.get(reverse("admin:payments_paymentattempt_changelist")).status_code, 403)
+
+    def test_decisions_and_reservations_are_view_only_even_for_superuser(self):
+        call_command("run_payment_worker", simulate=True, limit=2, stdout=StringIO())
+        payment = PaymentAttempt.objects.get(charge__purpose="rent")
+        decision = reserve_money(
+            command_id=uuid4(), settlement_id=payment.charge.settlement_id, payment_id=payment.id,
+            kind="rent_refund", amount_kopecks=48_000, actor_ref="admin",
+            expected_terms_version=1, basis_ref="admin-refund", basis_version=1, decision_allowed=True,
+        )
+        user = get_user_model().objects.create_superuser(username="operator", password="test-only")
+        self.client.force_login(user)
+        for obj in (decision, decision.reservations.get(), decision.requests.get()):
+            with self.subTest(model=obj._meta.model_name):
+                prefix = f"admin:payments_{obj._meta.model_name}"
+                change_url = reverse(f"{prefix}_change", args=[obj.pk])
+                self.assertEqual(self.client.get(change_url).status_code, 200)
+                self.assertEqual(self.client.post(change_url, {"amount_kopecks": 1}).status_code, 403)
+                self.assertEqual(self.client.post(reverse(f"{prefix}_delete", args=[obj.pk]), {"post": "yes"}).status_code, 403)
+                self.assertEqual(self.client.get(reverse(f"{prefix}_add")).status_code, 403)
+        decision.refresh_from_db()
+        self.assertEqual(decision.amount_kopecks, 48_000)
