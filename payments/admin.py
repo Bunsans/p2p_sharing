@@ -1,8 +1,8 @@
 from django.contrib import admin
 
 from .models import (
-    Charge, MoneyDecision, MoneyDecisionRequest, MoneyReservation, PaymentAttempt,
-    PaymentRequest, ProviderCommand, ProviderObservation, Settlement,
+    Charge, MoneyDecision, MoneyDecisionRequest, MoneyReservation, OutgoingAttempt,
+    OutgoingRequest, PaymentAttempt, PaymentRequest, ProviderCommand, ProviderObservation, Settlement,
 )
 
 
@@ -61,4 +61,11 @@ class MoneyReservationAdmin(HistoryAdmin):
     list_filter = ("purpose",)
 
 
-admin.site.register(MoneyDecisionRequest, HistoryAdmin)
+@admin.register(OutgoingAttempt)
+class OutgoingAttemptAdmin(HistoryAdmin):
+    list_display = ("id", "reservation", "operation", "status", "provider", "environment", "updated_at")
+    list_filter = ("operation", "status", "provider", "environment")
+    search_fields = ("=id", "external_id")
+
+
+admin.site.register([MoneyDecisionRequest, OutgoingRequest], HistoryAdmin)

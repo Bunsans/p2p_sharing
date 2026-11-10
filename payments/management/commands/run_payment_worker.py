@@ -5,7 +5,7 @@ from payments.worker import execute_one
 
 
 class Command(BaseCommand):
-    help = "Execute one bounded batch of LOCAL SIMULATED payments (no bank API)."
+    help = "Execute one bounded batch of LOCAL SIMULATED payments, refunds and payouts (no bank API)."
 
     def add_arguments(self, parser):
         parser.add_argument("--simulate", action="store_true", help="Required: acknowledge local simulation")
@@ -21,4 +21,6 @@ class Command(BaseCommand):
             if not execute_one(Simulator()):
                 break
             processed += 1
-        self.stdout.write(f"LOCAL SIMULATION: processed {processed} command(s); no bank calls.")
+        self.stdout.write(
+            f"LOCAL SIMULATION: processed {processed} command(s) (payments/refunds/payouts); no bank calls."
+        )

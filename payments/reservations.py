@@ -41,9 +41,15 @@ def _reservations(payment, settlement, kind, amount):
             raise CommandConflict("refund exceeds the original payment")
         split = split_rent_refund(settlement.owner_kopecks, settlement.commission_kopecks,
                                  totals["refunded"], amount)
+        previous = None
+        if totals["refunded"]:
+            previous = MoneyReservation.objects.get(
+                decision__payment=payment, purpose=purpose.RENT_REFUND, next_refund__isnull=True,
+            )
         reservations = [MoneyReservation(
             purpose=purpose.RENT_REFUND, amount_kopecks=amount,
             rent_owner_kopecks=split.owner_kopecks, rent_commission_kopecks=split.commission_kopecks,
+            previous_refund=previous,
         )]
     else:
         reservations = [MoneyReservation(
@@ -117,7 +123,7 @@ def reserve_money(*, command_id, settlement_id, payment_id, kind, amount_kopecks
                 decision = MoneyDecision.objects.create(**parameters)
                 for reservation in reservations:
                     reservation.decision = decision
-                # shortcut: reserves cannot be released; add ordered execution before refund cancellation.
+                # shortcut: reserves cannot be released; cancellation needs an explicit allocation correction.
                 MoneyReservation.objects.bulk_create(reservations)
             MoneyDecisionRequest.objects.create(id=command_id, decision=decision)
             return decision

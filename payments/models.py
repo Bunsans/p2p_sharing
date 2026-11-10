@@ -125,7 +125,10 @@ class ProviderCommand(models.Model):
         NEEDS_REVIEW = "needs_review"
 
     id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
-    attempt = models.OneToOneField(PaymentAttempt, on_delete=models.PROTECT, related_name="command")
+    attempt = models.OneToOneField(PaymentAttempt, on_delete=models.PROTECT, related_name="command", null=True, blank=True)
+    outgoing_attempt = models.OneToOneField(
+        "OutgoingAttempt", on_delete=models.PROTECT, related_name="command", null=True, blank=True,
+    )
     idempotency_key = models.UUIDField(default=uuid4, unique=True, editable=False)
     payload = models.JSONField()
     status = models.CharField(max_length=16, choices=Status, default=Status.QUEUED)
@@ -144,6 +147,11 @@ class ProviderCommand(models.Model):
             models.Index(fields=["status", "lease_until"], name="command_lease_idx"),
         ]
         constraints = [
+            models.CheckConstraint(
+                condition=(Q(attempt__isnull=False, outgoing_attempt__isnull=True)
+                           | Q(attempt__isnull=True, outgoing_attempt__isnull=False)),
+                name="command_exactly_one_attempt",
+            ),
             models.CheckConstraint(
                 condition=Q(status__in=["queued", "running", "done", "needs_review"]),
                 name="command_valid_status",
@@ -211,9 +219,16 @@ class MoneyReservation(models.Model):
     amount_kopecks = models.BigIntegerField()
     rent_owner_kopecks = models.BigIntegerField(default=0)
     rent_commission_kopecks = models.BigIntegerField(default=0)
+    previous_refund = models.OneToOneField(
+        "self", on_delete=models.PROTECT, related_name="next_refund", null=True, blank=True,
+    )
 
     class Meta:
         constraints = [
+            models.CheckConstraint(
+                condition=Q(purpose="rent_refund") | Q(previous_refund__isnull=True),
+                name="reservation_refund_predecessor",
+            ),
             models.UniqueConstraint(fields=["decision", "purpose"], name="reservation_unique_purpose"),
             models.CheckConstraint(
                 condition=Q(amount_kopecks__gt=0, rent_owner_kopecks__gte=0,
@@ -235,3 +250,53 @@ class MoneyDecisionRequest(models.Model):
     id = models.UUIDField(primary_key=True, editable=False)
     decision = models.ForeignKey(MoneyDecision, on_delete=models.PROTECT, related_name="requests")
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class OutgoingAttempt(models.Model):
+    class Operation(models.TextChoices):
+        REFUND = "refund"
+        PAYOUT = "payout"
+
+    Status = PaymentAttempt.Status
+
+    id = models.UUIDField(primary_key=True, default=uuid4, editable=False)
+    reservation = models.ForeignKey(MoneyReservation, on_delete=models.PROTECT, related_name="outgoing_attempts")
+    operation = models.CharField(max_length=16, choices=Operation)
+    status = models.CharField(max_length=16, choices=Status, default=Status.PENDING)
+    external_id = models.CharField(max_length=128, blank=True)
+    provider = models.CharField(max_length=32, default="simulator")
+    environment = models.CharField(max_length=16, default="test")
+    account_ref = models.CharField(max_length=128, default="local")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reservation"], condition=~Q(status="canceled"),
+                name="outgoing_one_not_canceled",
+            ),
+            models.UniqueConstraint(
+                fields=["provider", "environment", "account_ref", "operation", "external_id"],
+                condition=~Q(external_id=""), name="outgoing_scoped_external_id",
+            ),
+            models.CheckConstraint(
+                condition=Q(operation__in=["refund", "payout"], status__in=["pending", "unknown", "succeeded", "canceled"]),
+                name="outgoing_valid_operation_status",
+            ),
+        ]
+
+
+class OutgoingRequest(models.Model):
+    id = models.UUIDField(primary_key=True, editable=False)
+    attempt = models.ForeignKey(OutgoingAttempt, on_delete=models.PROTECT, related_name="requests")
+    actor_ref = models.CharField(max_length=128)
+    expected_terms_version = models.PositiveIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=Q(expected_terms_version__gt=0), name="outgoing_request_version",
+            ),
+        ]
